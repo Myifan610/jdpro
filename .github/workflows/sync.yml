@@ -1,0 +1,59 @@
+# .github/workflows/sync-upstream.yml
+name: Sync Fork with Upstream (Preserve .github)
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout your fork (with full history)
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+          ref: main
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/6dylan6/jdpro.git
+
+      - name: Fetch upstream
+        run: git fetch upstream main
+
+      - name: Hard reset to upstream/main
+        run: git reset --hard upstream/main
+
+      - name: Restore .github from previous commit (if exists)
+        run: |
+          # 尝试从 origin/main 的前一个状态恢复 .github
+          # 注意：此时 HEAD 是 upstream/main，origin/main 是我们 fork 的旧 HEAD
+          if git ls-remote --exit-code origin main; then
+            # 获取 fork 当前远程 main 的最新 commit（即同步前的状态）
+            PREV_COMMIT=$(git rev-parse origin/main)
+            if git cat-file -e "$PREV_COMMIT:.github" 2>/dev/null; then
+              echo "Restoring .github from previous commit: $PREV_COMMIT"
+              git checkout "$PREV_COMMIT" -- .github
+            else
+              echo ".github not found in previous commit. Skipping restore."
+            fi
+          else
+            echo "origin/main not available. Skipping .github restore."
+          fi
+
+      - name: Commit and push if changed
+        run: |
+          git add .
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: sync from upstream (preserve .github)"
+            git push --force-with-lease origin main
+          else
+            echo "No changes detected. Already in sync."
+          fi
